@@ -34,6 +34,20 @@ w_up = 0
 count_init = 0
 can_delete_file = True
 nav_glob_finished = False
+global delta_step_done
+delta_step_done = False
+global count_goals
+count_goals = 1
+
+global count_run
+count_run = 0
+global else_done
+else_done=0
+
+
+
+# global delta_step
+# delta_step = False
 
 global count
 count = 0
@@ -221,68 +235,111 @@ def make_twist_msg(accel, acc_omega, goalData, warn_w, yaw_meas, last_point):
     global latest_yaw
     global count
     global nav_glob_finished
+    global count_goals
+    global delta_step
+    global delta_step_done
+    global count_run
+    delta_step=rospy.get_param('/delta_step')
     dt_in = 0.1
     cmd = Twist()
-    if not goalData[0]:
-        cmd_vel_ = vel_up + dt_in*defs.TARGET_SPEED/defs.T_RAMP_UP
-        #cmd_vel_ = vel_up + dt_in*accel
-        vel_up = cmd_vel_
 
-        cmd_w_ = w_up + dt_in*acc_omega
-        w_up = cmd_w_ 
+    # goal has not been reached yet, keep moving
+    if (not goalData[0] and not delta_step):
+        print("goalData IF")
 
-        if cmd_vel_ < defs.MAX_TARGET_SPEED and cmd_vel_ >defs.MIN_TARGET_SPEED: #if cmd_vel_ < defs.TARGET_SPEED:
-            cmd.linear.x = cmd_vel_
-        elif cmd_vel_ > defs.MAX_TARGET_SPEED:    
-            cmd.linear.x = defs.MAX_TARGET_SPEED #cmd.linear.x = defs.TARGET_SPEED
-        elif cmd_vel_ < defs.MIN_TARGET_SPEED:
-            cmd.linear.x = defs.MIN_TARGET_SPEED
-        if not warn_w:
-            cmd.angular.z =  w_up# + acc_omega*dt_in
+
+        if (delta_step_done):
+            print("DONE DELTA STEPPING")
+            cmd.linear.x = 0
+            cmd.angular.z = 0
+
         else:
-            w_up = 0
-            cmd.angular.z =  0# + acc_omega*dt_in
+            print("^^^^^^^^^^^^^^^^")
+            # delta_step_done = False
+            cmd_vel_ = vel_up + dt_in*defs.TARGET_SPEED/defs.T_RAMP_UP
+            #cmd_vel_ = vel_up + dt_in*accel
+            vel_up = cmd_vel_
+
+            cmd_w_ = w_up + dt_in*acc_omega
+            w_up = cmd_w_ 
+
+            if cmd_vel_ < defs.MAX_TARGET_SPEED and cmd_vel_ >defs.MIN_TARGET_SPEED: #if cmd_vel_ < defs.TARGET_SPEED:
+                cmd.linear.x = cmd_vel_
+            elif cmd_vel_ > defs.MAX_TARGET_SPEED:    
+                cmd.linear.x = defs.MAX_TARGET_SPEED #cmd.linear.x = defs.TARGET_SPEED
+            elif cmd_vel_ < defs.MIN_TARGET_SPEED:
+                cmd.linear.x = defs.MIN_TARGET_SPEED
+            if not warn_w:
+                cmd.angular.z =  w_up# + acc_omega*dt_in
+            else:
+                w_up = 0
+                cmd.angular.z =  0# + acc_omega*dt_in
     else:
+        print("goalData ELSE")
         cmd_w_ = w_up + dt_in*acc_omega
         w_up = cmd_w_ 
         dToGoal = goalData[1]
-        #cmd_vel_ = vel_down - dt_in*vel_down/defs.T_RAMP_DOWN
-        #cmd_vel_ = vel_down - dt_in*defs.TARGET_SPEED/defs.T_RAMP_DOWN
         cmd_vel_ = vel_down - dt_in*vel_down*vel_down/(5*dToGoal)
-        # print(dToGoal)
-        if dToGoal < 0.1: #was .2
 
-            # if goal is last waypoint, then exit from navigation
-            print("###########################")
-            print(robot_state.get_current_pos_meas()[0])
-            print(f"last point: {last_point}")
-            print(f"is diff <=  0.3?: {abs(robot_state.get_current_pos_meas()[0] - last_point)}")
-            print("###########################")
-            if abs(robot_state.get_current_pos_meas()[0] - last_point) <= 0.3:
+        if (delta_step_done):
+            print("&&&&&&&&&&&&&&&&&&&&&")
+            cmd.linear.x = 0
+            cmd.angular.z = 0
+            # delta_step = False
+        
+        # check if the parameter exists with the default value of False, i.e. the robot should not take a delta step
+        if rospy.has_param('delta_step'):
+            delta_step = rospy.get_param('/delta_step', 'False')
+        # if close to the waypoint
 
-                print("Reached last point")
-                nav_glob_finished = True
+        if (dToGoal < 0.1) or delta_step: #was .2'
+
+            if (not delta_step):
+                delta_step_done = False
+
                 cmd.linear.x = 0
                 cmd.angular.z = 0
+                print(f"Reached Waypoint {count_goals}")
                 vel_down = defs.MIN_TARGET_SPEED
                 rospy.set_param('nav_stat', True)
 
-            cmd.linear.x = 0
-            cmd.angular.z = 0
-            print("Goal Reached")
-            vel_down = defs.MIN_TARGET_SPEED
-            #latest_yaw = yaw_meas
-            # delete_pruning_points_from_file()
-            rospy.set_param('nav_stat', True)
-            # count+=1
+                # if goal is last waypoint, then exit from navigation
+                if abs(robot_state.get_current_pos_meas()[0] - last_point) <= 0.3:
+
+                    print("Reached last point")
+                    nav_glob_finished = True
+                    cmd.linear.x = 0
+                    cmd.angular.z = 0
+                    vel_down = defs.MIN_TARGET_SPEED
+                    rospy.set_param('nav_stat', True)
+            
+            # Handle delta step movement
+            if delta_step:
+                
+                print("Performing delta step")
+                # print(f"moving {count_run}")
+                cmd.linear.x = defs.MIN_TARGET_SPEED
+                cmd.angular.z = w_up
+                delta_step_done = True
+        
+
+
             
         else:
-            cmd.linear.x = cmd_vel_
-            vel_down = cmd_vel_
-            cmd.angular.z = 0.3*w_up
+            # this is called when robot is reaching goal
+            print("*******************")
+            if (delta_step_done):
+                print("pls stop _/\_")
+                cmd.linear.x = 0
+                cmd.angular.z = 0
+            else:
+                cmd.linear.x = cmd_vel_
+                vel_down = cmd_vel_
+                cmd.angular.z = 0.3*w_up
 
         #cmd.angular.z = w_up
     #print(cmd.linear.x)
+    print("sending cmd")
     cmd.linear.y = 0
     cmd.linear.z = 0
     cmd.angular.x = 0
@@ -318,6 +375,10 @@ def mpc_node():
     global latest_yaw
     global count
     global nav_glob_finished
+    global count_goals
+    global delta_step_done
+    # count_goals = 0
+    
     init_route = 1
     #target_ind = 0
     target_ind_move = 0
@@ -413,11 +474,15 @@ def mpc_node():
         # print("OUT OF WHILE")
         #current_time = rospy.Time.now()
         if not prune_done or init_route:
+            delta_step_done = False
+
             can_delete_file = True
             robot_state.get_current_meas_state()
-            print("Target_ind", target_ind)
+
+
             if index_pruning < len(ppx):
                 if not init_route:
+                    count_goals += 1
                     #target_ind = target_ind_move - defs.OFFSET_TO_GOAL
                     target_ind = utils.calc_nearest_index_pruning(robot_state.x, robot_state.y, global_cx, global_cy, 0)
 
@@ -426,10 +491,15 @@ def mpc_node():
                 #sio.savemat('/home/fyandun/Documentos/simulation/catkin_ws/src/mpc_controller_warthog/cy_test.mat', {'cy':cy})
                 #sio.savemat('/home/fyandun/Documentos/simulation/catkin_ws/src/mpc_controller_warthog/cyaw_test.mat', {'cyaw':cyaw})
                 #print(len(cx))
+
+                        
+
                 print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
                 goal = [cx[-defs.OFFSET_TO_GOAL], cy[-defs.OFFSET_TO_GOAL]]
                 #print(target_ind)
                 offset_stop = defs.OFFSET_TO_GOAL
+                # print(f"Goal Reached {count_goals}")
+                
             else:
                 target_ind_ = utils.calc_nearest_index_pruning(robot_state.x, robot_state.y, global_cx, global_cy, 0)
                 cx = global_cx[target_ind_:]
@@ -441,6 +511,7 @@ def mpc_node():
                 offset_stop = 0
             #print(goal)
 
+            
             target_ind, _ = utils.calc_nearest_index(robot_state, cx, cy, cyaw, 0)
 
             # initial yaw compensation
@@ -508,7 +579,9 @@ def mpc_node():
             #print(goal)
             #apply the control signals
             #dt_cmd = rospy.Time.now().to_sec() - current_time.to_sec()
+            # print(len(goal))
             goalData = utils.check_goal(robot_state.get_current_pos_meas(), goal, target_ind_move, len(cx)-offset_stop)
+
             #print(dt_cmd)
             #warn_w = False
             #if is_fresh_start == "0" or diff_prune != 0:
@@ -527,12 +600,11 @@ def mpc_node():
                 else:
                     flag_start_stragiht = False
                     warn_w = False
-            print('Yaw:', robot_state.yaw)
-            print('Goal yaw', cyaw[target_ind_move])
-            print(warn_w)
+            # print('Yaw:', robot_state.yaw)
+            # print('Goal yaw', cyaw[target_ind_move])
+            # print(warn_w)
             cmd_command = make_twist_msg(ai, wi, goalData, warn_w, robot_state.yaw, last_point)
-
-            print('nav_glob_finished:',nav_glob_finished,' count:',count)
+            # print('nav_glob_finished:',nav_glob_finished,' count:',count)
             if nav_glob_finished:
                 cmd_command.linear.x = 0
                 print("Global navigation finished - Exiting ...")
